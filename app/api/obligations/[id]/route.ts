@@ -7,7 +7,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const obligation = await prisma.obligation.findUnique({
       where: { id: parseInt(id) },
-      include: { transactions: true },
+      include: { transactions: { orderBy: { paymentDate: "desc" } } },
     });
     if (!obligation) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(computeObligation(obligation));
@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         ...(notes !== undefined && { notes }),
         ...(isRecurring !== undefined && { isRecurring: Boolean(isRecurring) }),
       },
-      include: { transactions: true },
+      include: { transactions: { orderBy: { paymentDate: "desc" } } },
     });
 
     return NextResponse.json(computeObligation(obligation));
@@ -49,8 +49,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    await prisma.transaction.deleteMany({ where: { obligationId: parseInt(id) } });
-    await prisma.obligation.delete({ where: { id: parseInt(id) } });
+    const numId = parseInt(id);
+    // Atomic deletion — transactions first, then obligation
+    await prisma.$transaction([
+      prisma.transaction.deleteMany({ where: { obligationId: numId } }),
+      prisma.obligation.delete({ where: { id: numId } }),
+    ]);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error(err);

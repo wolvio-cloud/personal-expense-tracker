@@ -1,150 +1,221 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { formatINR, formatDate } from "@/lib/format";
+import { formatINR, formatShortDate } from "@/lib/format";
+import { ALERT_META, STATUS_META, AlertType, StatusType } from "@/lib/obligations";
 
 const TYPES = ["All", "Credit Card", "Payment Pending", "Planned Expense", "Pending Credit"];
 const STATUSES = ["All", "Pending", "Partial", "Cleared"];
-const DIRECTIONS = ["All", "Outflow", "Inflow"];
 
-const STATUS_COLORS: Record<string, string> = {
-  Cleared: "#27AE60", Partial: "#5B9BD5", Pending: "#90afc5",
-};
-const ALERT_COLORS: Record<string, string> = {
-  Overdue: "#C0392B", Upcoming: "#F39C12", Open: "#5B9BD5", Planned: "#4a7fa5",
-};
+function SkeletonCard() {
+  return (
+    <div className="rounded-2xl p-4" style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.08)" }}>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="skeleton h-4 w-16" />
+        <div className="skeleton h-4 w-14" />
+        <div className="ml-auto skeleton h-4 w-10" />
+      </div>
+      <div className="skeleton h-4 w-2/3 mb-3" />
+      <div className="flex gap-4">
+        <div className="skeleton h-3 w-16" />
+        <div className="skeleton h-3 w-16" />
+        <div className="skeleton h-3 w-16" />
+      </div>
+      <div className="skeleton h-1.5 w-full mt-3" />
+    </div>
+  );
+}
+
+function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      className="shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+      style={{
+        background: active ? "#3b82f6" : "#122438",
+        color: active ? "#fff" : "#7fa8c9",
+        border: `1px solid ${active ? "#3b82f6" : "rgba(59,130,246,0.12)"}`,
+        boxShadow: active ? "0 2px 12px rgba(59,130,246,0.3)" : "none",
+      }}>
+      {label}
+    </button>
+  );
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ObligationCard({ o }: { o: any }) {
+  const alertMeta = ALERT_META[o.alert as AlertType] ?? ALERT_META.Planned;
+  const statusMeta = STATUS_META[o.status as StatusType] ?? STATUS_META.Pending;
+
+  return (
+    <Link href={`/obligations/${o.id}`} className="card-press block">
+      <div className="rounded-2xl p-4"
+        style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.08)", boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>
+        {/* Row 1: ref, alert, direction */}
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-xs font-mono font-bold" style={{ color: "#3b82f6" }}>{o.refId}</span>
+          <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+            style={{ backgroundColor: alertMeta.bg, color: alertMeta.color }}>{o.alert}</span>
+          <span className="ml-auto text-xs font-semibold"
+            style={{ color: o.direction === "Inflow" ? "#22c55e" : "#ef4444" }}>
+            {o.direction === "Inflow" ? "↓ IN" : "↑ OUT"}
+          </span>
+        </div>
+
+        {/* Row 2: name */}
+        <p className="text-sm font-semibold text-white truncate mb-2">{o.item}</p>
+
+        {/* Row 3: amounts */}
+        <div className="flex items-end gap-4">
+          <div>
+            <div className="text-xs mb-0.5" style={{ color: "#4a6d8a" }}>Total</div>
+            <div className="text-sm font-medium text-white num">{formatINR(o.originalAmount)}</div>
+          </div>
+          <div>
+            <div className="text-xs mb-0.5" style={{ color: "#4a6d8a" }}>Paid</div>
+            <div className="text-sm font-medium num" style={{ color: "#22c55e" }}>{formatINR(o.paidSoFar)}</div>
+          </div>
+          <div>
+            <div className="text-xs mb-0.5" style={{ color: "#4a6d8a" }}>Left</div>
+            <div className="text-sm font-bold num"
+              style={{ color: o.remaining > 0 ? "#f59e0b" : "#22c55e" }}>{formatINR(o.remaining)}</div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className="text-xs mb-0.5" style={{ color: "#4a6d8a" }}>
+              {o.dueDate ? formatShortDate(o.dueDate) : "No due date"}
+            </div>
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ backgroundColor: statusMeta.bg, color: statusMeta.color }}>{o.status}</span>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ backgroundColor: "#1a3149" }}>
+          <div className="h-full rounded-full bar-fill transition-all"
+            style={{ width: `${o.paidPct}%`, backgroundColor: o.paidPct === 100 ? "#22c55e" : "#3b82f6" }} />
+        </div>
+        <div className="mt-1 text-right">
+          <span className="text-xs" style={{ color: "#4a6d8a" }}>{o.paidPct}% complete</span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function ObligationsList() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [obligations, setObligations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [type, setType] = useState("All");
   const [status, setStatus] = useState("All");
   const [direction, setDirection] = useState("All");
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
     if (type !== "All") params.set("type", type);
     if (status !== "All") params.set("status", status);
     if (direction !== "All") params.set("direction", direction);
+    if (search.trim()) params.set("search", search.trim());
+
     setLoading(true);
+    setError(false);
     fetch(`/api/obligations?${params}`)
-      .then((r) => r.json())
+      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
       .then(setObligations)
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [type, status, direction]);
+  }, [type, status, direction, search]);
 
   return (
-    <div className="p-4 max-w-2xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="max-w-2xl mx-auto pb-nav">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
         <h1 className="text-lg font-bold text-white">Dues & Receivables</h1>
         <Link href="/add"
-          className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium min-h-[44px]"
-          style={{ backgroundColor: "#1a2f45", color: "#5B9BD5" }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold"
+          style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.2)", color: "#60a5fa" }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16M4 12h16" />
           </svg>
           Add
         </Link>
       </div>
 
-      {/* Filters */}
-      <div className="space-y-2">
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {TYPES.map((t) => (
-            <button key={t} onClick={() => setType(t)}
-              className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium min-h-[36px] transition-colors"
-              style={{
-                backgroundColor: type === t ? "#5B9BD5" : "#1a2f45",
-                color: type === t ? "#fff" : "#90afc5",
-              }}>
-              {t === "All" ? "All Types" : t}
-            </button>
-          ))}
+      {/* Search */}
+      <div className="px-4 mb-3">
+        <div className="relative">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+            style={{ color: "#4a6d8a" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            ref={searchRef}
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search obligations..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+            style={{
+              background: "#122438",
+              border: "1px solid rgba(59,130,246,0.12)",
+              color: "#e8f3ff",
+            }}
+          />
         </div>
-        <div className="flex gap-2">
-          {STATUSES.map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium min-h-[36px] transition-colors"
-              style={{
-                backgroundColor: status === s ? "#243b52" : "#1a2f45",
-                color: status === s ? "#e8f0fe" : "#90afc5",
-                border: `1px solid ${status === s ? "#5B9BD5" : "transparent"}`,
-              }}>
-              {s}
-            </button>
-          ))}
-          <div className="flex-1" />
-          {DIRECTIONS.slice(1).map((d) => (
-            <button key={d} onClick={() => setDirection(direction === d ? "All" : d)}
-              className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium min-h-[36px] transition-colors"
-              style={{
-                backgroundColor: direction === d ? "#243b52" : "#1a2f45",
-                color: direction === d ? "#e8f0fe" : "#90afc5",
-                border: `1px solid ${direction === d ? "#5B9BD5" : "transparent"}`,
-              }}>
-              {d === "Outflow" ? "↑ Out" : "↓ In"}
-            </button>
+      </div>
+
+      {/* Type filters */}
+      <div className="px-4 mb-2">
+        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+          {TYPES.map((t) => (
+            <FilterChip key={t} label={t === "All" ? "All Types" : t} active={type === t} onClick={() => setType(t)} />
           ))}
         </div>
       </div>
 
-      {/* List */}
-      {loading ? (
-        <div className="text-center py-8 text-blue-300">Loading...</div>
-      ) : obligations.length === 0 ? (
-        <div className="text-center py-8 text-blue-400">No obligations match the filters.</div>
-      ) : (
-        <div className="space-y-2">
-          {obligations.map((o) => (
-            <Link key={o.id} href={`/obligations/${o.id}`}>
-              <div className="rounded-xl p-4 flex items-start gap-3 active:opacity-80"
-                style={{ backgroundColor: "#1a2f45" }}>
-                <div className="flex flex-col gap-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold" style={{ color: "#5B9BD5" }}>{o.refId}</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-white"
-                      style={{ backgroundColor: ALERT_COLORS[o.alert] || "#4a7fa5" }}>
-                      {o.alert}
-                    </span>
-                    <span className="ml-auto text-xs" style={{ color: o.direction === "Inflow" ? "#27AE60" : "#C0392B" }}>
-                      {o.direction === "Inflow" ? "↓ IN" : "↑ OUT"}
-                    </span>
-                  </div>
-                  <span className="text-sm font-semibold text-white truncate">{o.item}</span>
-                  <div className="flex items-center gap-3 mt-1">
-                    <div>
-                      <div className="text-xs text-blue-300">Total</div>
-                      <div className="text-sm font-medium text-white">{formatINR(o.originalAmount)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-300">Paid</div>
-                      <div className="text-sm font-medium" style={{ color: "#27AE60" }}>{formatINR(o.paidSoFar)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-300">Remaining</div>
-                      <div className="text-sm font-bold" style={{ color: o.remaining > 0 ? "#e8f0fe" : "#27AE60" }}>
-                        {formatINR(o.remaining)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-xs text-blue-300">
-                      {o.dueDate ? `Due ${formatDate(o.dueDate)}` : "No due date"}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: STATUS_COLORS[o.status] + "30", color: STATUS_COLORS[o.status] }}>
-                      {o.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
+      {/* Status + direction filters */}
+      <div className="px-4 mb-4 flex gap-2">
+        {STATUSES.map((s) => (
+          <FilterChip key={s} label={s} active={status === s} onClick={() => setStatus(s)} />
+        ))}
+        <div className="flex-1" />
+        <FilterChip label="↑ Out" active={direction === "Outflow"} onClick={() => setDirection(direction === "Outflow" ? "All" : "Outflow")} />
+        <FilterChip label="↓ In"  active={direction === "Inflow"}  onClick={() => setDirection(direction === "Inflow"  ? "All" : "Inflow")}  />
+      </div>
+
+      {/* Content */}
+      <div className="px-4">
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}
+          </div>
+        ) : error ? (
+          <div className="text-center py-12 rounded-2xl"
+            style={{ background: "#122438", border: "1px solid rgba(239,68,68,0.2)" }}>
+            <p className="text-3xl mb-2">⚠️</p>
+            <p className="font-semibold text-white">Failed to load</p>
+            <p className="text-sm mt-1" style={{ color: "#7fa8c9" }}>Check your connection and try again.</p>
+          </div>
+        ) : obligations.length === 0 ? (
+          <div className="text-center py-12 rounded-2xl"
+            style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.08)" }}>
+            <p className="text-4xl mb-3">📋</p>
+            <p className="font-semibold text-white">No obligations found</p>
+            <p className="text-sm mt-1" style={{ color: "#7fa8c9" }}>
+              {search ? "Try a different search term" : "Add your first due or receivable"}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs font-medium" style={{ color: "#4a6d8a" }}>{obligations.length} obligation{obligations.length !== 1 ? "s" : ""}</p>
+            {obligations.map((o) => <ObligationCard key={o.id} o={o} />)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

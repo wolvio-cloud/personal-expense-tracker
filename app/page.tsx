@@ -1,13 +1,13 @@
 export const dynamic = "force-dynamic";
 
-import { formatINR, formatDate } from "@/lib/format";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { computeObligation } from "@/lib/obligations";
+import { computeObligation, ALERT_META } from "@/lib/obligations";
+import { formatINR, formatShortDate } from "@/lib/format";
 
 async function getDashboard() {
   const [accounts, obligations, recentTxns] = await Promise.all([
-    prisma.account.findMany(),
+    prisma.account.findMany({ orderBy: { balance: "desc" } }),
     prisma.obligation.findMany({ include: { transactions: true } }),
     prisma.transaction.findMany({
       orderBy: { paymentDate: "desc" },
@@ -17,7 +17,7 @@ async function getDashboard() {
   ]);
 
   const computed = obligations.map(computeObligation);
-  const cashAvailable = accounts.reduce((sum, a) => sum + a.balance, 0);
+  const cashAvailable = accounts.reduce((s, a) => s + a.balance, 0);
   const outflows = computed.filter((o) => o.direction === "Outflow");
   const inflows = computed.filter((o) => o.direction === "Inflow");
   const totalOutflows = outflows.reduce((s, o) => s + o.originalAmount, 0);
@@ -29,11 +29,9 @@ async function getDashboard() {
   const partial = computed.filter((o) => o.status === "Partial");
 
   return {
+    accounts,
     kpis: {
-      cashAvailable,
-      totalOutflows,
-      totalInflows,
-      netPosition,
+      cashAvailable, totalOutflows, totalInflows, netPosition,
       overdueAmount: overdue.reduce((s, o) => s + o.remaining, 0),
       upcomingAmount: upcoming.reduce((s, o) => s + o.remaining, 0),
     },
@@ -43,44 +41,73 @@ async function getDashboard() {
   };
 }
 
-function KPICard({ label, value, color }: { label: string; value: string; color?: string }) {
+import React from "react";
+
+// ── KPI card icons ──────────────────────────────────────────────────────────
+const KPI_ICONS: Record<string, React.ReactElement> = {
+  cash: <path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />,
+  net: <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />,
+  out: <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />,
+  in: <path strokeLinecap="round" strokeLinejoin="round" d="M7 16l-4-4m0 0l4-4m-4 4h18m-6 4v1a3 3 0 003 3h4a3 3 0 003-3V7a3 3 0 00-3-3h-4a3 3 0 00-3 3v1" />,
+  overdue: <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />,
+  upcoming: <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />,
+};
+
+function Icon({ d }: { d: React.ReactElement }) {
   return (
-    <div className="rounded-xl p-4 flex flex-col gap-1" style={{ backgroundColor: "#1a2f45" }}>
-      <span className="text-xs text-blue-300 uppercase tracking-wide font-medium">{label}</span>
-      <span className="text-xl font-bold truncate" style={{ color: color || "#e8f0fe" }}>{value}</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-5 h-5">
+      {d}
+    </svg>
+  );
+}
+
+function KPICard({ label, value, iconKey, color, delay }: {
+  label: string; value: string; iconKey: string; color: string; delay: number;
+}): React.ReactElement {
+  return (
+    <div className={`rounded-2xl p-4 flex flex-col gap-3 animate-fade-up-delay-${delay}`}
+      style={{
+        background: "linear-gradient(135deg, #122438 0%, #0f1e30 100%)",
+        border: "1px solid rgba(59,130,246,0.1)",
+        boxShadow: "0 4px 24px rgba(0,0,0,0.25)",
+      }}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#7fa8c9" }}>{label}</span>
+        <span style={{ color, opacity: 0.8 }}><Icon d={KPI_ICONS[iconKey]} /></span>
+      </div>
+      <span className="text-2xl font-bold num leading-none" style={{ color }}>{value}</span>
     </div>
   );
 }
 
-function AlertBadge({ alert }: { alert: string }) {
-  const colors: Record<string, string> = {
-    Overdue: "#C0392B", Upcoming: "#F39C12", Cleared: "#27AE60",
-    Partial: "#5B9BD5", Open: "#5B9BD5", Planned: "#4a7fa5",
-  };
-  return (
-    <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-white"
-      style={{ backgroundColor: colors[alert] || "#4a7fa5" }}>
-      {alert}
-    </span>
-  );
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ObligationCard({ item, color }: { item: any; color: string }) {
+function ActionCard({ item, borderColor }: { item: any; borderColor: string }) {
+  const meta = ALERT_META[item.alert as keyof typeof ALERT_META];
+  const paidPct = item.paidPct ?? 0;
   return (
-    <Link href={`/obligations/${item.id}`}>
-      <div className="rounded-lg p-3 border-l-4 flex items-center justify-between active:opacity-80"
-        style={{ backgroundColor: "#1a2f45", borderColor: color }}>
-        <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-xs font-mono" style={{ color: "#5B9BD5" }}>{item.refId}</span>
-          <span className="text-sm font-medium text-white truncate">{item.item}</span>
+    <Link href={`/obligations/${item.id}`} className="card-press block">
+      <div className="rounded-xl p-3.5 flex gap-3"
+        style={{ background: "#122438", border: `1px solid ${borderColor}30`, boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>
+        <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: borderColor }} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-xs font-mono font-semibold" style={{ color: "#3b82f6" }}>{item.refId}</span>
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ backgroundColor: meta.bg, color: meta.color }}>{item.alert}</span>
+          </div>
+          <p className="text-sm font-semibold text-white truncate">{item.item}</p>
           {item.dueDate && (
-            <span className="text-xs text-blue-300">Due {formatDate(item.dueDate)}</span>
+            <p className="text-xs mt-0.5" style={{ color: "#7fa8c9" }}>Due {formatShortDate(item.dueDate)}</p>
+          )}
+          {paidPct > 0 && (
+            <div className="mt-2 h-1 rounded-full overflow-hidden" style={{ backgroundColor: "#1a3149" }}>
+              <div className="h-full rounded-full bar-fill" style={{ width: `${paidPct}%`, backgroundColor: borderColor }} />
+            </div>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1 ml-3 shrink-0">
-          <span className="text-sm font-bold" style={{ color }}>{formatINR(item.remaining)}</span>
-          <AlertBadge alert={item.alert} />
+        <div className="flex flex-col items-end justify-between shrink-0">
+          <span className="text-sm font-bold num" style={{ color: borderColor }}>{formatINR(item.remaining)}</span>
+          <span className="text-xs" style={{ color: "#4a6d8a" }}>{paidPct}% paid</span>
         </div>
       </div>
     </Link>
@@ -92,102 +119,148 @@ export default async function Dashboard() {
   try {
     data = await getDashboard();
   } catch {
-    return <div className="p-4 text-red-400">Failed to load dashboard data.</div>;
+    return (
+      <div className="p-6 flex flex-col items-center justify-center gap-3 text-center">
+        <div className="text-4xl">⚠️</div>
+        <p className="font-semibold text-white">Failed to load dashboard</p>
+        <p className="text-sm" style={{ color: "#7fa8c9" }}>Check the database connection.</p>
+      </div>
+    );
   }
 
-  const { kpis, statusCounts, actionItems, recentTransactions } = data;
+  const { accounts, kpis, statusCounts, actionItems, recentTransactions } = data;
 
   return (
-    <div className="p-4 space-y-6 max-w-2xl mx-auto">
-      <section>
-        <div className="grid grid-cols-2 gap-3">
-          <KPICard label="Cash Available" value={formatINR(kpis.cashAvailable)} color="#27AE60" />
-          <KPICard label="Net Position" value={formatINR(kpis.netPosition)}
-            color={kpis.netPosition >= 0 ? "#27AE60" : "#C0392B"} />
-          <KPICard label="Total Outflows" value={formatINR(kpis.totalOutflows)} color="#C0392B" />
-          <KPICard label="Total Inflows" value={formatINR(kpis.totalInflows)} color="#27AE60" />
-          <KPICard label="Overdue" value={formatINR(kpis.overdueAmount)} color="#C0392B" />
-          <KPICard label="Upcoming (7d)" value={formatINR(kpis.upcomingAmount)} color="#F39C12" />
-        </div>
-      </section>
-
-      <section>
-        <div className="rounded-xl p-3 flex items-center justify-around text-center"
-          style={{ backgroundColor: "#1a2f45" }}>
-          {[
-            { count: statusCounts.overdue, label: "Overdue", color: "#C0392B" },
-            { count: statusCounts.upcoming, label: "Upcoming", color: "#F39C12" },
-            { count: statusCounts.cleared, label: "Cleared", color: "#27AE60" },
-            { count: statusCounts.partial, label: "Partial", color: "#5B9BD5" },
-          ].map((s, i) => (
-            <>
-              {i > 0 && <div key={`sep-${i}`} className="w-px h-8 bg-blue-800" />}
-              <div key={s.label}>
-                <div className="text-lg font-bold" style={{ color: s.color }}>{s.count}</div>
-                <div className="text-xs text-blue-300">{s.label}</div>
-              </div>
-            </>
+    <div className="max-w-2xl mx-auto pb-nav">
+      {/* Accounts strip */}
+      <div className="px-4 pt-4 pb-2 overflow-x-auto no-scrollbar">
+        <div className="flex gap-2.5">
+          {accounts.map((a, i) => (
+            <div key={a.id}
+              className={`shrink-0 rounded-xl px-3.5 py-2.5 animate-fade-up-delay-${i + 1}`}
+              style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.12)", minWidth: "130px" }}>
+              <div className="text-xs mb-1" style={{ color: "#7fa8c9" }}>{a.type} · {a.name}</div>
+              <div className="text-sm font-bold num text-white">{formatINR(a.balance)}</div>
+            </div>
           ))}
         </div>
-      </section>
+      </div>
 
+      {/* KPI Grid */}
+      <div className="px-4 pt-2 grid grid-cols-2 gap-3">
+        <KPICard label="Cash Available"  value={formatINR(kpis.cashAvailable)}  iconKey="cash"    color="#22c55e" delay={1} />
+        <KPICard label="Net Position"    value={formatINR(kpis.netPosition)}    iconKey="net"     color={kpis.netPosition >= 0 ? "#22c55e" : "#ef4444"} delay={2} />
+        <KPICard label="Total Outflows"  value={formatINR(kpis.totalOutflows)}  iconKey="out"     color="#ef4444" delay={3} />
+        <KPICard label="Total Inflows"   value={formatINR(kpis.totalInflows)}   iconKey="in"      color="#22c55e" delay={4} />
+        <KPICard label="Overdue"         value={formatINR(kpis.overdueAmount)}  iconKey="overdue" color="#ef4444" delay={5} />
+        <KPICard label="Upcoming 7d"     value={formatINR(kpis.upcomingAmount)} iconKey="upcoming" color="#f59e0b" delay={5} />
+      </div>
+
+      {/* Status pill bar */}
+      <div className="px-4 pt-4">
+        <div className="rounded-2xl px-4 py-3 flex items-center justify-around"
+          style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.1)" }}>
+          {[
+            { n: statusCounts.overdue, label: "Overdue", color: "#ef4444" },
+            { n: statusCounts.upcoming, label: "Upcoming", color: "#f59e0b" },
+            { n: statusCounts.cleared, label: "Cleared", color: "#22c55e" },
+            { n: statusCounts.partial, label: "Partial", color: "#3b82f6" },
+          ].map((s, i) => (
+            <div key={s.label} className="flex items-center gap-2.5">
+              {i > 0 && <div className="w-px h-6" style={{ backgroundColor: "rgba(59,130,246,0.15)" }} />}
+              <div className="text-center">
+                <div className="text-xl font-bold num" style={{ color: s.color }}>{s.n}</div>
+                <div className="text-xs" style={{ color: "#7fa8c9" }}>{s.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Overdue */}
       {actionItems.overdue.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-red-400 uppercase tracking-wide mb-2">
-            Overdue ({actionItems.overdue.length})
-          </h2>
+        <div className="px-4 pt-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#ef4444" }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#ef4444" }}>
+              Overdue · {actionItems.overdue.length}
+            </h2>
+          </div>
           <div className="space-y-2">
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {actionItems.overdue.map((item: any) => (
-              <ObligationCard key={item.id} item={item} color="#C0392B" />
+              <ActionCard key={item.id} item={item} borderColor="#ef4444" />
             ))}
           </div>
-        </section>
+        </div>
       )}
 
+      {/* Upcoming */}
       {actionItems.upcoming.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-amber-400 uppercase tracking-wide mb-2">
-            Upcoming — Next 7 Days ({actionItems.upcoming.length})
-          </h2>
+        <div className="px-4 pt-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#f59e0b" }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#f59e0b" }}>
+              Upcoming 7 Days · {actionItems.upcoming.length}
+            </h2>
+          </div>
           <div className="space-y-2">
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {actionItems.upcoming.map((item: any) => (
-              <ObligationCard key={item.id} item={item} color="#F39C12" />
+              <ActionCard key={item.id} item={item} borderColor="#f59e0b" />
             ))}
           </div>
-        </section>
+        </div>
       )}
 
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-blue-300 uppercase tracking-wide">Recent Payments</h2>
-          <Link href="/obligations" className="text-xs" style={{ color: "#5B9BD5" }}>View all</Link>
+      {/* Recent Payments */}
+      <div className="px-4 pt-5 pb-2">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7fa8c9" }}>
+            Recent Payments
+          </h2>
+          <Link href="/obligations" className="text-xs font-semibold" style={{ color: "#3b82f6" }}>View all →</Link>
         </div>
         {recentTransactions.length === 0 ? (
-          <p className="text-sm text-blue-400 text-center py-6">No payments yet.</p>
+          <div className="text-center py-8 rounded-2xl" style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.1)" }}>
+            <p className="text-3xl mb-2">💳</p>
+            <p className="text-sm font-medium text-white">No payments recorded</p>
+            <p className="text-xs mt-1" style={{ color: "#7fa8c9" }}>Tap + to record your first payment</p>
+          </div>
         ) : (
           <div className="space-y-2">
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {recentTransactions.map((txn: any) => (
-              <div key={txn.id} className="rounded-lg p-3 flex items-center justify-between"
-                style={{ backgroundColor: "#1a2f45" }}>
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-sm font-medium text-white truncate">{txn.obligation?.item}</span>
-                  <span className="text-xs text-blue-300">{txn.mode} · {formatDate(txn.paymentDate)}</span>
+              <div key={txn.id} className="rounded-xl px-4 py-3 flex items-center justify-between"
+                style={{ background: "#122438", border: "1px solid rgba(59,130,246,0.08)" }}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: "rgba(34,197,94,0.12)" }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth={2} className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{txn.obligation?.item}</p>
+                    <p className="text-xs" style={{ color: "#7fa8c9" }}>{txn.mode} · {formatShortDate(txn.paymentDate)}</p>
+                  </div>
                 </div>
-                <span className="text-sm font-bold ml-3" style={{ color: "#27AE60" }}>
+                <span className="text-sm font-bold num ml-3 shrink-0" style={{ color: "#22c55e" }}>
                   {formatINR(txn.amountPaid)}
                 </span>
               </div>
             ))}
           </div>
         )}
-      </section>
+      </div>
 
+      {/* FAB */}
       <Link href="/pay"
-        className="fixed bottom-20 right-4 w-14 h-14 rounded-full flex items-center justify-center shadow-xl active:scale-95 transition-transform"
-        style={{ backgroundColor: "#5B9BD5" }}>
+        className="fixed bottom-20 right-4 w-14 h-14 rounded-full flex items-center justify-center"
+        style={{
+          background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+          boxShadow: "0 4px 20px rgba(59,130,246,0.5)",
+        }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} className="w-7 h-7">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16M4 12h16" />
         </svg>
