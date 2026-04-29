@@ -8,20 +8,27 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type");
     const status = searchParams.get("status");
     const direction = searchParams.get("direction");
+    const search = searchParams.get("search")?.trim().toLowerCase();
 
     const obligations = await prisma.obligation.findMany({
       where: {
         ...(type ? { type } : {}),
         ...(direction ? { direction } : {}),
       },
-      include: { transactions: true },
-      orderBy: { createdAt: "desc" },
+      include: { transactions: { orderBy: { paymentDate: "desc" } } },
+      orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
     });
 
     let computed = obligations.map(computeObligation);
 
-    if (status) {
-      computed = computed.filter((o) => o.status === status);
+    if (status) computed = computed.filter((o) => o.status === status);
+    if (search) {
+      computed = computed.filter(
+        (o) =>
+          o.item.toLowerCase().includes(search) ||
+          o.refId.toLowerCase().includes(search) ||
+          (o.notes?.toLowerCase().includes(search) ?? false)
+      );
     }
 
     return NextResponse.json(computed);
@@ -40,24 +47,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    const parsed = parseFloat(originalAmount);
+    if (isNaN(parsed) || parsed <= 0) {
+      return NextResponse.json({ error: "Amount must be a positive number" }, { status: 400 });
+    }
+
     const obligation = await prisma.obligation.create({
       data: {
-        refId,
+        refId: refId.trim().toUpperCase(),
         month,
         type,
-        item,
-        originalAmount: parseFloat(originalAmount),
+        item: item.trim(),
+        originalAmount: parsed,
         dueDate: dueDate ? new Date(dueDate) : null,
         direction,
-        notes: notes || null,
+        notes: notes?.trim() || null,
         isRecurring: Boolean(isRecurring),
       },
       include: { transactions: true },
     });
 
     return NextResponse.json(computeObligation(obligation), { status: 201 });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error(err);
+    const msg = String(err);
+    if (msg.includes("Unique constraint") || msg.includes("UNIQUE")) {
+      return NextResponse.json({ error: "Ref ID already exists. Use a different ID." }, { status: 409 });
+    }
     return NextResponse.json({ error: "Failed to create obligation" }, { status: 500 });
   }
 }

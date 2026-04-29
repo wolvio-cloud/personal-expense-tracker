@@ -15,6 +15,14 @@ export function formatDate(date: string | Date | null | undefined): string {
   });
 }
 
+export function formatShortDate(date: string | Date | null | undefined): string {
+  if (!date) return "—";
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+  });
+}
+
 export function currentMonth(): string {
   return new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 }
