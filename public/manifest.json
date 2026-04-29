@@ -1,0 +1,24 @@
+{
+  "name": "Finance Control",
+  "short_name": "Finance",
+  "description": "Personal cash flow tracking",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1f30",
+  "theme_color": "#1F4E78",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

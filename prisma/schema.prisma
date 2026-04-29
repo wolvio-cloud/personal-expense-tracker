@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Account {
+  id         Int      @id @default(autoincrement())
+  name       String
+  type       String   // Bank | Cash | Wallet
+  balance    Float    @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("accounts")
+}
+
+model Obligation {
+  id             Int           @id @default(autoincrement())
+  refId          String        @unique
+  month          String
+  type           String        // Credit Card | Payment Pending | Planned Expense | Pending Credit
+  item           String
+  originalAmount Float
+  dueDate        DateTime?
+  direction      String        // Outflow | Inflow
+  notes          String?
+  isRecurring    Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  transactions   Transaction[]
+
+  @@map("obligations")
+}
+
+model Transaction {
+  id           Int        @id @default(autoincrement())
+  obligationId Int
+  paymentDate  DateTime
+  amountPaid   Float
+  mode         String     // UPI | Bank Transfer | Cash | Card | Cheque | Auto-Debit | Other
+  notes        String?
+  createdAt    DateTime   @default(now())
+  obligation   Obligation @relation(fields: [obligationId], references: [id])
+
+  @@map("transactions")
+}
